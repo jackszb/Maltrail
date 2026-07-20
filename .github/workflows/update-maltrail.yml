@@ -70,7 +70,7 @@ jobs:
           # --- 2. 处理 IP 为 JSON ---
           echo "🔄 处理 IP 列表..."
           jq -R . "$IP_TXT" | jq -s 'map(select(length > 0))' | jq '{
-            "version": 3,
+            "version": 4,
             "rules": [
               {
                 "ip_cidr": .
@@ -81,7 +81,7 @@ jobs:
           # --- 3. 处理域名为 JSON ---
           echo "🔄 处理域名列表..."
           jq -R . "$DOMAIN_TXT" | jq -s 'map(select(length > 0))' | jq '{
-            "version": 3,
+            "version": 4,
             "rules": [
               {
                 "domain_suffix": .
