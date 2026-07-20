@@ -60,6 +60,13 @@ jobs:
           echo "⬇️ 正在下载域名列表..."
           curl -sSL -o "$DOMAIN_TXT" "$DOMAIN_URL"
 
+          # --- 1.5 排序并去重 ---
+          echo "🔤 对 IP 列表排序去重..."
+          sort -V -u -o "$IP_TXT" "$IP_TXT"
+
+          echo "🔤 对域名列表排序去重..."
+          sort -u -o "$DOMAIN_TXT" "$DOMAIN_TXT"
+
           # --- 2. 处理 IP 为 JSON ---
           echo "🔄 处理 IP 列表..."
           jq -R . "$IP_TXT" | jq -s 'map(select(length > 0))' | jq '{
