@@ -1,0 +1,115 @@
+name: Update Maltrail Ruleset
+
+on:
+  schedule:
+    # 每天国际标准时间 04:00 (北京时间 12:00) 执行
+    - cron: '0 4 * * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 必须有写权限才能推送到仓库
+
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+
+      - name: Install sing-box
+        run: |
+          # 获取最新版本号
+          VERSION=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases/latest" | jq -r .tag_name)
+          echo "Installing sing-box $VERSION"
+          # 下载并解压 (Linux amd64)
+          curl -sLo sing-box.tar.gz "https://github.com/SagerNet/sing-box/releases/download/${VERSION}/sing-box-${VERSION#v}-linux-amd64.tar.gz"
+          tar -xzf sing-box.tar.gz
+          # 移动二进制文件到 path
+          sudo mv sing-box-*/sing-box /usr/local/bin/
+          sing-box version
+
+      - name: Download and Compile Rules
+        run: |
+          # --- 配置 ---
+          IP_URL="https://raw.githubusercontent.com/stamparm/ipsum/refs/heads/master/levels/1.txt"
+          DOMAIN_URL="https://raw.githubusercontent.com/stamparm/aux/master/maltrail-malware-domains.txt"
+
+          # 创建输出文件夹 (仓库根目录下的 rules)
+          mkdir -p rules
+
+          # 临时文本文件路径 (仅作为中间产物，不推送)
+          TMP_DIR=$(mktemp -d)
+          IP_TXT="$TMP_DIR/maltrail_ip.txt"
+          DOMAIN_TXT="$TMP_DIR/maltrail_domain.txt"
+
+          # 最终产物路径 (json + srs 都放在 rules/ 目录下)
+          IP_JSON="rules/maltrail_ip.json"
+          DOMAIN_JSON="rules/maltrail_domain.json"
+          IP_SRS="rules/maltrail_ip.srs"
+          DOMAIN_SRS="rules/maltrail_domain.srs"
+
+          # --- 1. 下载列表 ---
+          echo "⬇️ 正在下载 IP 列表..."
+          curl -sSL -o "$IP_TXT" "$IP_URL"
+
+          echo "⬇️ 正在下载域名列表..."
+          curl -sSL -o "$DOMAIN_TXT" "$DOMAIN_URL"
+
+          # --- 2. 处理 IP 为 JSON ---
+          echo "🔄 处理 IP 列表..."
+          jq -R . "$IP_TXT" | jq -s 'map(select(length > 0))' | jq '{
+            "version": 3,
+            "rules": [
+              {
+                "ip_cidr": .
+              }
+            ]
+          }' > "$IP_JSON"
+
+          # --- 3. 处理域名为 JSON ---
+          echo "🔄 处理域名列表..."
+          jq -R . "$DOMAIN_TXT" | jq -s 'map(select(length > 0))' | jq '{
+            "version": 3,
+            "rules": [
+              {
+                "domain_suffix": .
+              }
+            ]
+          }' > "$DOMAIN_JSON"
+
+          # --- 4. 编译为 SRS 文件 ---
+          echo "🔨 正在编译 .srs 文件..."
+          sing-box rule-set compile "$IP_JSON" -o "$IP_SRS"
+          sing-box rule-set compile "$DOMAIN_JSON" -o "$DOMAIN_SRS"
+
+          # --- 5. 清理临时文本文件 ---
+          echo "🧹 清理临时文件..."
+          rm -rf "$TMP_DIR"
+
+          echo "✅ 处理完成。"
+          echo "📂 rules 目录内容:"
+          ls -lh rules/
+
+      # 获取当前日期
+      - name: Get Current Date
+        id: info
+        run: |
+          echo "DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      # 直接提交并推送 rules 文件夹到当前分支
+      - name: Commit and Push rules folder
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add rules/
+          if git diff --cached --quiet; then
+            echo "没有变化，跳过提交。"
+          else
+            git commit -m "Github Action: update maltrail rules [${{ steps.info.outputs.DATE }}]"
+            git push
+          fi
